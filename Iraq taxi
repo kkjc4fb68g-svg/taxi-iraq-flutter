@@ -1,0 +1,338 @@
+import 'package:flutter/material.dart';
+import 'package:google_maps_flutter/google_maps_flutter.dart';
+import 'package:location/location.dart';
+import 'dart:math';
+
+void main() {
+  runApp(const TaxiIraqApp());
+}
+
+class TaxiIraqApp extends StatelessWidget {
+  const TaxiIraqApp({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return MaterialApp(
+      debugShowCheckedModeBanner: false,
+      title: 'Taxi Iraq',
+      theme: ThemeData(
+        primarySwatch: Colors.green,
+        fontFamily: 'Arial',
+      ),
+      home: const HomeScreen(),
+    );
+  }
+}
+
+class HomeScreen extends StatefulWidget {
+  const HomeScreen({super.key});
+
+  @override
+  State<HomeScreen> createState() => _HomeScreenState();
+}
+
+class _HomeScreenState extends State<HomeScreen> {
+  late GoogleMapController mapController;
+  LatLng? currentLocation;
+  LatLng? destinationLocation;
+  double? fare;
+  bool searching = false;
+  bool confirmedDestination = false;
+
+  final Location locationService = Location();
+  final Set<Marker> markers = {};
+
+  final TextEditingController destinationController = TextEditingController();
+
+  // قائمة الأماكن الموسعة في الفلوجة
+  final List<String> popularPlaces = [
+    "جامع الأنصار",
+    "جامع الإمام علي",
+    "جامع الكبير",
+    "ساحة المدينة",
+    "شارع الرشيد",
+    "شارع الجمهورية",
+    "سوق الفلوجة",
+    "مستشفى الفلوجة العام",
+    "مستشفى الطبابة العسكرية",
+    "مركز الشرطة المركزي",
+    "ميدان التحرير",
+    "مكتبة الفلوجة العامة",
+    "جامعة الأنبار – فرع الفلوجة",
+    "نهر الفلوجة",
+    "محطة القطار القديمة",
+    "حديقة البلدية",
+    "حي الكرمة",
+    "حي الصناعة",
+    "مركز التسوق الكبير (مول الفلوجة)",
+    "مخبز المدينة الرئيسي",
+    "محطة وقود الفلوجة"
+  ];
+
+  List<String> suggestions = [];
+
+  @override
+  void initState() {
+    super.initState();
+    _getCurrentLocation();
+  }
+
+  Future<void> _getCurrentLocation() async {
+    final loc = await locationService.getLocation();
+    setState(() {
+      currentLocation = LatLng(loc.latitude!, loc.longitude!);
+      markers.add(Marker(
+        markerId: const MarkerId("current"),
+        position: currentLocation!,
+        infoWindow: const InfoWindow(title: "مكاني الحالي"),
+        icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueBlue),
+      ));
+    });
+  }
+
+  double _calculateDistance(LatLng start, LatLng end) {
+    const double R = 6371;
+    double dLat = _deg2rad(end.latitude - start.latitude);
+    double dLon = _deg2rad(end.longitude - start.longitude);
+    double a =
+        sin(dLat / 2) * sin(dLat / 2) +
+            cos(_deg2rad(start.latitude)) *
+                cos(_deg2rad(end.latitude)) *
+                sin(dLon / 2) *
+                sin(dLon / 2);
+    double c = 2 * atan2(sqrt(a), sqrt(1 - a));
+    return R * c;
+  }
+
+  double _deg2rad(double deg) => deg * pi / 180;
+
+  double _calculateFare(double km) {
+    if (km <= 5) return 2000;
+    return 2000 + ((km - 5) * 150);
+  }
+
+  void confirmDestination() {
+    if (currentLocation != null && destinationLocation != null) {
+      double km = _calculateDistance(currentLocation!, destinationLocation!);
+      setState(() {
+        fare = _calculateFare(km);
+        confirmedDestination = true;
+      });
+    }
+  }
+
+  void searchDriver() {
+    setState(() {
+      searching = true;
+    });
+
+    Future.delayed(const Duration(seconds: 3), () {
+      setState(() {
+        searching = false;
+        confirmedDestination = false;
+        fare = null;
+        markers.removeWhere((m) => m.markerId.value == "destination");
+        destinationLocation = null;
+        destinationController.clear();
+      });
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text("🚕 تم العثور على سائق"),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+    });
+  }
+
+  void updateSuggestions(String input) {
+    setState(() {
+      suggestions = popularPlaces
+          .where((place) => place.contains(input))
+          .toList();
+    });
+  }
+
+  void selectSuggestion(String place) {
+    setState(() {
+      destinationController.text = place;
+      suggestions.clear();
+      // نضيف Marker على الخريطة مباشرة (نجعل الخريطة تتحرك للوجهة)
+      // هنا نترك Marker ثابت، يمكن تعديل لاحقًا مع API تحويل الاسم لـ LatLng
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      body: currentLocation == null
+          ? const Center(child: CircularProgressIndicator())
+          : Stack(
+              children: [
+                GoogleMap(
+                  initialCameraPosition: CameraPosition(
+                    target: currentLocation!,
+                    zoom: 15,
+                  ),
+                  myLocationEnabled: true,
+                  zoomControlsEnabled: false,
+                  onMapCreated: (controller) {
+                    mapController = controller;
+                  },
+                  markers: markers,
+                  onTap: (latLng) {
+                    setState(() {
+                      destinationLocation = latLng;
+                      confirmedDestination = false;
+                      fare = null;
+                      markers.removeWhere((m) => m.markerId.value == "destination");
+                      markers.add(Marker(
+                        markerId: const MarkerId("destination"),
+                        position: latLng,
+                        infoWindow: const InfoWindow(title: "الوجهة"),
+                      ));
+                      suggestions.clear();
+                    });
+                  },
+                ),
+                Positioned(
+                  bottom: 0,
+                  left: 0,
+                  right: 0,
+                  child: Container(
+                    padding: const EdgeInsets.all(20),
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      borderRadius: const BorderRadius.vertical(
+                        top: Radius.circular(24),
+                      ),
+                      boxShadow: [
+                        BoxShadow(
+                          color: Colors.black26,
+                          blurRadius: 15,
+                          offset: const Offset(0, -3),
+                        ),
+                      ],
+                    ),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        const Text(
+                          "حدد وجهتك على الخريطة أو اختر مكان معروف",
+                          style: TextStyle(
+                              fontSize: 18, fontWeight: FontWeight.bold),
+                        ),
+                        const SizedBox(height: 12),
+                        TextField(
+                          controller: destinationController,
+                          decoration: InputDecoration(
+                            hintText: "اكتب اسم المكان...",
+                            prefixIcon: const Icon(Icons.place, color: Colors.green),
+                            filled: true,
+                            fillColor: Colors.grey[100],
+                            border: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(12),
+                              borderSide: BorderSide.none,
+                            ),
+                          ),
+                          onChanged: (value) {
+                            updateSuggestions(value);
+                          },
+                        ),
+                        if (suggestions.isNotEmpty)
+                          Container(
+                            height: 120,
+                            margin: const EdgeInsets.only(top: 5),
+                            child: ListView.builder(
+                              itemCount: suggestions.length,
+                              itemBuilder: (context, index) {
+                                return ListTile(
+                                  title: Text(suggestions[index]),
+                                  leading: const Icon(Icons.location_on, color: Colors.green),
+                                  onTap: () {
+                                    selectSuggestion(suggestions[index]);
+                                  },
+                                );
+                              },
+                            ),
+                          ),
+                        const SizedBox(height: 12),
+                        if (destinationLocation != null && !confirmedDestination)
+                          SizedBox(
+                            width: double.infinity,
+                            child: ElevatedButton(
+                              onPressed: confirmDestination,
+                              style: ElevatedButton.styleFrom(
+                                padding:
+                                    const EdgeInsets.symmetric(vertical: 16),
+                                shape: RoundedRectangleBorder(
+                                    borderRadius: BorderRadius.circular(12)),
+                                backgroundColor: Colors.green,
+                              ),
+                              child: const Text(
+                                "تأكيد الوجهة",
+                                style: TextStyle(fontSize: 18, color: Colors.white),
+                              ),
+                            ),
+                          ),
+                        if (confirmedDestination && fare != null) ...[
+                          Card(
+                            color: Colors.green[50],
+                            shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(12)),
+                            child: ListTile(
+                              leading:
+                                  const Icon(Icons.attach_money, color: Colors.green),
+                              title: Text(
+                                "السعر المتوقع: ${fare!.toInt()} دينار",
+                                style: const TextStyle(
+                                    fontSize: 18, fontWeight: FontWeight.bold),
+                              ),
+                            ),
+                          ),
+                          const SizedBox(height: 12),
+                          SizedBox(
+                            width: double.infinity,
+                            child: ElevatedButton(
+                              onPressed: searchDriver,
+                              style: ElevatedButton.styleFrom(
+                                padding:
+                                    const EdgeInsets.symmetric(vertical: 16),
+                                shape: RoundedRectangleBorder(
+                                    borderRadius: BorderRadius.circular(12)),
+                                backgroundColor: Colors.green,
+                              ),
+                              child: const Text(
+                                "ابحث عن سائق",
+                                style: TextStyle(
+                                    fontSize: 18, color: Colors.white),
+                              ),
+                            ),
+                          ),
+                        ]
+                      ],
+                    ),
+                  ),
+                ),
+                if (searching)
+                  Container(
+                    color: Colors.black45,
+                    child: const Center(
+                      child: Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          CircularProgressIndicator(color: Colors.white),
+                          SizedBox(height: 12),
+                          Text(
+                            "جاري البحث عن سائق...",
+                            style: TextStyle(color: Colors.white, fontSize: 20, fontWeight: FontWeight.bold),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+              ],
+            ),
+    );
+  }
+}
